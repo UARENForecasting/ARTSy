@@ -1,7 +1,5 @@
-bokeh
+bokeh>=0.12.6
 matplotlib
 numpy
-pygrib
 requests
-scipy
 tornado
