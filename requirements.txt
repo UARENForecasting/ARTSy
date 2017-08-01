@@ -1,0 +1,7 @@
+bokeh
+matplotlib
+numpy
+pygrib
+requests
+scipy
+tornado
