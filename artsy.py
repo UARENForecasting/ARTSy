@@ -11,10 +11,9 @@ from bokeh.models import (
     Range1d, LinearColorMapper, ColorBar, FixedTicker,
     ColumnDataSource, CustomJS, WMTSTileSource)
 from bokeh.plotting import figure, curdoc
-import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm
 from matplotlib.ticker import MaxNLocator
-from matplotlib.cm import ScalarMappable
+from matplotlib.cm import ScalarMappable, get_cmap
 import numpy as np
 from tornado import gen
 
@@ -63,7 +62,7 @@ def find_all_times():
 
 # setup the coloring
 levels = MaxNLocator(nbins=21).tick_values(0, MAX_VAL)
-cmap = plt.get_cmap('viridis')
+cmap = get_cmap('viridis')
 norm = BoundaryNorm(levels, ncolors=cmap.N, clip=True)
 sm = ScalarMappable(norm=norm, cmap=cmap)
 color_pal = [RGB(*val).to_hex() for val in
