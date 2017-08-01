@@ -77,7 +77,7 @@ def regrid(grb_data, lats, lons):
     return regridded_data, X, Y
 
 
-def save_data(base_dir, valid_date, regridded_data, X, Y):
+def save_data(base_dir, valid_date, regridded_data, X, Y, overwrite):
     """Save the data and grid to a numpy file"""
     logging.info('Saving numpy data to a file...')
     thedir = os.path.join(os.path.expanduser(base_dir),
@@ -86,6 +86,9 @@ def save_data(base_dir, valid_date, regridded_data, X, Y):
         os.makedirs(thedir)
 
     path = os.path.join(thedir, valid_date.strftime('%HZ.npz'))
+    if os.path.isfile(path) and not overwrite:
+        logging.error('%s already exists', path)
+        sys.exit(1)
     np.savez_compressed(path, data=regridded_data, X=X, Y=Y)
 
 
@@ -106,6 +109,8 @@ def main():
     argparser.add_argument(
         '--bbox', default='31,37,245,257',
         help='The lat/lon bounding box for the data subset like lat0,lat1,lon0,lon1')  # NOQA
+    argparser.add_argument('-o', '--overwrite', action='store_true',
+                           help='Overwrite file if already exists')
 
     args = argparser.parse_args()
 
@@ -125,7 +130,7 @@ def main():
     download_data(date, tmpfile)
     grb_data, lats, lons, valid_date = read_subset(tmpfile.name, bbox)
     regridded_data, X, Y = regrid(grb_data, lats, lons)
-    save_data(args.save_dir, valid_date, regridded_data, X, Y)
+    save_data(args.save_dir, valid_date, regridded_data, X, Y, args.overwrite)
     tmpfile.close()
 
 
