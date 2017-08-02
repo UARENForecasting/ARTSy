@@ -6,15 +6,14 @@ import os
 
 from bokeh import events
 from bokeh.colors import RGB
-from bokeh.layouts import layout
+from bokeh.layouts import gridplot
 from bokeh.models import (
-    Range1d, LinearColorMapper, ColorBar, FixedTicker,
+    Range1d, LinearColorMapper, ColorBar, FixedTicker, WheelZoomTool,
     ColumnDataSource, CustomJS, WMTSTileSource)
 from bokeh.plotting import figure, curdoc
-import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm
 from matplotlib.ticker import MaxNLocator
-from matplotlib.cm import ScalarMappable
+from matplotlib.cm import ScalarMappable, get_cmap
 import numpy as np
 from tornado import gen
 
@@ -63,7 +62,7 @@ def find_all_times():
 
 # setup the coloring
 levels = MaxNLocator(nbins=21).tick_values(0, MAX_VAL)
-cmap = plt.get_cmap('viridis')
+cmap = get_cmap('viridis')
 norm = BoundaryNorm(levels, ncolors=cmap.N, clip=True)
 sm = ScalarMappable(norm=norm, cmap=cmap)
 color_pal = [RGB(*val).to_hex() for val in
@@ -102,10 +101,13 @@ sfmt = '%Y-%m-%d %HZ'
 title = 'MRMS Precipitation {} through {}'.format(
     (valid_date - dt.timedelta(hours=24)).strftime(sfmt),
     valid_date.strftime(sfmt))
+
+tools = 'pan, box_zoom, resize, reset, save'
 map_fig = figure(plot_width=width, plot_height=height,
                  x_range=(xn[0], xn[-1]), y_range=(yn[0], yn[-1]),
                  y_axis_type=None, x_axis_type=None,
-                 toolbar_location='left',
+                 toolbar_location='left', tools=tools + ', wheel_zoom',
+                 active_scroll='wheel_zoom',
                  title=title)
 
 rgba_img = map_fig.image_rgba([rgba_vals], x=[xn[0]], y=[yn[0]], dw=[dw],
@@ -128,7 +130,8 @@ map_fig.add_layout(cb, 'right')
 hist_fig = figure(plot_width=height, plot_height=height,
                   toolbar_location='right',
                   x_axis_label='Precipitation (inches)',
-                  y_axis_label='Counts',
+                  y_axis_label='Counts', tools=tools + ', ywheel_zoom',
+                  active_scroll='ywheel_zoom',
                   x_range=Range1d(start=0, end=MAX_VAL))
 
 for source in hist_sources:
@@ -211,6 +214,6 @@ map_fig.y_range.on_change('start', update_histogram)
 map_fig.y_range.on_change('end', update_histogram)
 
 # layout the document
-l = layout([[map_fig, hist_fig]])
+lay = gridplot([[map_fig, hist_fig]], toolbar_location='left', merge_tools=False)
 doc = curdoc()
-doc.add_root(l)
+doc.add_root(lay)
