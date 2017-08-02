@@ -73,45 +73,22 @@ ticker = FixedTicker(ticks=levels[::3])
 cb = ColorBar(color_mapper=color_mapper, location=(0, 0),
               scale_alpha=ALPHA, ticker=ticker)
 
-masked_regrid, X, Y, valid_date = load_data()
-
-xn = X[0]
-yn = Y[:, 0]
-dw = xn[-1] - xn[0]
-dh = yn[-1] - yn[0]
-dx = xn[1] - xn[0]
-dy = yn[1] - yn[0]
-
-# make histograms
-counts, bin_edges = np.histogram(masked_regrid, bins=levels,
-                                 range=(levels.min(), levels.max()))
-bin_width = bin_edges[1] - bin_edges[0]
-bin_centers = bin_edges + bin_width / 2
-hist_sources = [ColumnDataSource(data={'x': [bin_centers[i]],
-                                       'top': [counts[i]],
-                                       'color': [color_pal[i]]})
-                for i in range(len(counts))]
-
-# bokeh plotting
-rgba_vals = sm.to_rgba(masked_regrid, bytes=True, alpha=ALPHA)
-
 width = 600
-height = int(width / 2 * dy / dx)
+height = 350
 sfmt = '%Y-%m-%d %HZ'
-title = 'MRMS Precipitation {} through {}'.format(
-    (valid_date - dt.timedelta(hours=24)).strftime(sfmt),
-    valid_date.strftime(sfmt))
-
 tools = 'pan, box_zoom, resize, reset, save'
 map_fig = figure(plot_width=width, plot_height=height,
-                 x_range=(xn[0], xn[-1]), y_range=(yn[0], yn[-1]),
                  y_axis_type=None, x_axis_type=None,
                  toolbar_location='left', tools=tools + ', wheel_zoom',
                  active_scroll='wheel_zoom',
-                 title=title)
+                 title='MRMS Precipitation')
 
-rgba_img = map_fig.image_rgba([rgba_vals], x=[xn[0]], y=[yn[0]], dw=[dw],
-                              dh=[dh])
+rgba_img_source = ColumnDataSource(data={'image': [], 'x': [], 'y': [],
+                                         'dw': [], 'dh': []})
+rgba_img = map_fig.image_rgba(image='image', x='x', y='y', dw='dw', dh='dh',
+                              source=rgba_img_source)
+
+
 # Need to use this and not bokeh.tile_providers.STAMEN_TONER
 # https://github.com/bokeh/bokeh/issues/4770
 STAMEN_TONER = WMTSTileSource(
@@ -134,19 +111,30 @@ hist_fig = figure(plot_width=height, plot_height=height,
                   active_scroll='ywheel_zoom',
                   x_range=Range1d(start=0, end=MAX_VAL))
 
+# make histograms
+bin_width = levels[1] - levels[0]
+bin_centers = levels[:-1] + bin_width / 2
+hist_sources = [ColumnDataSource(data={'x': [bin_centers[i]],
+                                       'top': [3.0e6],
+                                       'color': [color_pal[i]],
+                                       'bottom': [0],
+                                       'width': [bin_width]})
+                for i in range(len(bin_centers))]
 for source in hist_sources:
-    hist_fig.vbar(x='x', top='top', width=bin_width, bottom=0, color='color',
-                  fill_alpha=ALPHA, source=source)
+    hist_fig.vbar(x='x', top='top', width='width', bottom='bottom',
+                  color='color', fill_alpha=ALPHA, source=source)
 
-line_source = ColumnDataSource(data={'x': [-1, -1], 'y': [0, counts.max()]})
+line_source = ColumnDataSource(data={'x': [-1, -1], 'y': [0, 1]})
 hist_fig.line(x='x', y='y', color='red', source=line_source, alpha=ALPHA)
 
 
-# Dynamic histogram update and bin indicator line
+local_data_source = ColumnDataSource(data={'masked_regrid': [0], 'xn': [0],
+                                           'yn': [0],
+                                           'valid_date': [dt.datetime.now()]})
+
 pos_source = ColumnDataSource(data={
-    'bin_centers': [bin_centers], 'shape': [masked_regrid.shape[1]],
-    'bin': [np.digitize(masked_regrid, levels[:-1]).astype('uint8').ravel()],
-    'dx': [dx], 'dy': [dy], 'left': [xn[0]], 'bottom': [yn[0]]})
+    'bin_centers': [bin_centers], 'shape': [0],
+    'bin': [0], 'dx': [0], 'dy': [0], 'left': [0], 'bottom': [0]})
 
 line_callback = CustomJS(args={'source': pos_source,
                                'lsource': line_source},
@@ -192,6 +180,11 @@ def _update_histogram():
     right = map_fig.x_range.end
     bottom = map_fig.y_range.start
     top = map_fig.y_range.end
+
+    masked_regrid = local_data_source.data['masked_regrid'][0]
+    xn = local_data_source.data['xn'][0]
+    yn = local_data_source.data['yn'][0]
+
     left_idx = np.abs(xn - left).argmin()
     right_idx = np.abs(xn - right).argmin() + 1
     bottom_idx = np.abs(yn - bottom).argmin()
@@ -206,6 +199,49 @@ def _update_histogram():
         source.data.update({'top': [counts[i]]})
 
 
+def update_map(attr, old, new):
+    try:
+        doc.add_timeout_callback(_update_histogram, 100)
+    except ValueError:
+        pass
+
+
+@gen.coroutine
+def _update_map():
+    valid_date = local_data_source.data['valid_date'][0]
+    title = 'MRMS Precipitation {} through {}'.format(
+        (valid_date - dt.timedelta(hours=24)).strftime(sfmt),
+        valid_date.strftime(sfmt))
+    map_fig.title.text = title
+    masked_regrid = local_data_source.data['masked_regrid'][0]
+    xn = local_data_source.data['xn'][0]
+    yn = local_data_source.data['yn'][0]
+    rgba_vals = sm.to_rgba(masked_regrid, bytes=True, alpha=ALPHA)
+    rgba_img_source.data.update({'image': [rgba_vals], 'x': [xn[0]],
+                                 'y': [yn[0]], 'dw': [xn[-1] - xn[0]],
+                                 'dh': [yn[-1] - yn[0]]})
+    map_fig.x_range.start = xn[0]
+    map_fig.x_range.end = xn[-1]
+    map_fig.y_range.start = yn[0]
+    map_fig.y_range.end = yn[-1]
+
+
+@gen.coroutine
+def _update_data():
+    masked_regrid, X, Y, valid_date = load_data()
+    xn = X[0]
+    yn = Y[:, 0]
+    local_data_source.data.update({'masked_regrid': [masked_regrid],
+                                   'xn': [xn], 'yn': [yn],
+                                   'valid_data': [valid_date]})
+    pos_source.data.update({
+        'shape': [masked_regrid.shape[1]],
+        'bin': [np.digitize(masked_regrid, levels[:-1]).astype('uint8').ravel()],
+        'dx': [xn[1] - xn[0]], 'dy': [yn[1] - yn[0]],
+        'left': [xn[0]], 'bottom': [yn[0]]})
+    curdoc().add_next_tick_callback(_update_map)
+
+
 map_fig.js_on_event(events.MouseMove, line_callback)
 map_fig.js_on_event(events.MouseLeave, no_line)
 map_fig.x_range.on_change('start', update_histogram)
@@ -213,7 +249,10 @@ map_fig.x_range.on_change('end', update_histogram)
 map_fig.y_range.on_change('start', update_histogram)
 map_fig.y_range.on_change('end', update_histogram)
 
+
 # layout the document
-lay = gridplot([[map_fig, hist_fig]], toolbar_location='left', merge_tools=False)
+lay = gridplot([[map_fig, hist_fig]], toolbar_location='left',
+               merge_tools=False)
 doc = curdoc()
 doc.add_root(lay)
+doc.add_next_tick_callback(_update_data)
