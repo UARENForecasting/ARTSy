@@ -126,48 +126,16 @@ for source in hist_sources:
     hist_fig.vbar(x='x', top='top', width='width', bottom='bottom',
                   color='color', fill_alpha=ALPHA, source=source)
 
+# line and point on map showing tapped location value
 line_source = ColumnDataSource(data={'x': [-1, -1], 'y': [0, 1]})
 hist_fig.line(x='x', y='y', color='red', source=line_source, alpha=ALPHA)
+hover_pt = ColumnDataSource(data={'x': [0], 'y': [0]})
+map_fig.x(x='x', y='y', size=10, color='red', alpha=ALPHA,
+          source=hover_pt, level='overlay')
 
 file_dict = find_all_times()
 dates = list(file_dict.keys())[::-1]
-select_day = Select(title='Valid Date', value=dates[0], options=dates)
-
-# Setup callbacks for moving line on histogram
-pos_source = ColumnDataSource(data={
-    'bin_centers': [bin_centers], 'shape': [0],
-    'bin': [0], 'dx': [0], 'dy': [0], 'left': [0], 'bottom': [0]})
-
-line_callback = CustomJS(args={'source': pos_source,
-                               'lsource': line_source},
-                         code="""
-var data = source.data;
-var x = cb_obj['x'];
-var y = cb_obj['y'];
-
-var x_index = 0;
-var y_index = 0;
-
-x_index = Math.round((x - data['left'][0])/data['dx'][0]);
-y_index = Math.round((y - data['bottom'][0])/data['dy'][0]);
-var idx = y_index * data['shape'][0] + x_index;
-var bin = data['bin'][0][idx];
-var center = data['bin_centers'][0][bin - 1];
-var ldata = lsource.data;
-xi = ldata['x'];
-xi[0] = center;
-xi[1] = center;
-setTimeout(function(){lsource.change.emit()}, 100);
-""")
-
-no_line = CustomJS(args={'lsource': line_source}, code="""
-var data = lsource.data;
-xi = data['x'];
-xi[0] = -1;
-xi[1] = -1;
-lsource.change.emit();
-""")
-
+select_day = Select(title='Valid End', value=dates[0], options=dates)
 
 # Setup the updates for all the data
 local_data_source = ColumnDataSource(data={'masked_regrid': [0], 'xn': [0],
@@ -228,9 +196,13 @@ def _update_map(update_range=False):
     xn = local_data_source.data['xn'][0]
     yn = local_data_source.data['yn'][0]
     rgba_vals = sm.to_rgba(masked_regrid, bytes=True, alpha=ALPHA)
-    rgba_img_source.data.update({'image': [rgba_vals], 'x': [xn[0]],
-                                 'y': [yn[0]], 'dw': [xn[-1] - xn[0]],
-                                 'dh': [yn[-1] - yn[0]]})
+    dx = xn[1] - xn[0]
+    dy = yn[1] - yn[0]
+    rgba_img_source.data.update({'image': [rgba_vals],
+                                 'x': [xn[0] - dx / 2],
+                                 'y': [yn[0] - dy / 2],
+                                 'dw': [xn[-1] - xn[0] + dx],
+                                 'dh': [yn[-1] - yn[0] + dy]})
     if update_range:
         map_fig.x_range.start = xn[0]
         map_fig.x_range.end = xn[-1]
@@ -255,22 +227,44 @@ def _update_data(update_range=False):
     local_data_source.data.update({'masked_regrid': [masked_regrid],
                                    'xn': [xn], 'yn': [yn],
                                    'valid_date': [valid_date]})
-    pos_source.data.update({
-        'shape': [masked_regrid.shape[1]],
-        'bin': [np.digitize(masked_regrid, levels[:-1]).astype('uint8').ravel()],
-        'dx': [xn[1] - xn[0]], 'dy': [yn[1] - yn[0]],
-        'left': [xn[0]], 'bottom': [yn[0]]})
     curdoc().add_next_tick_callback(partial(_update_map, update_range))
     curdoc().add_timeout_callback(_update_histogram, 10)
     logging.debug('Done updating data')
 
 
-map_fig.js_on_event(events.MouseMove, line_callback)
-map_fig.js_on_event(events.MouseLeave, no_line)
+def move_hist_line(event):
+    try:
+        doc.add_timeout_callback(partial(_move_hist_line, event), 50)
+    except ValueError:
+        pass
+
+
+@gen.coroutine
+def _move_hist_line(event):
+    x = event.x
+    y = event.y
+
+    masked_regrid = local_data_source.data['masked_regrid'][0]
+    xn = local_data_source.data['xn'][0]
+    yn = local_data_source.data['yn'][0]
+
+    x_idx = np.abs(xn - x).argmin()
+    y_idx = np.abs(yn - y).argmin()
+    val = masked_regrid[y_idx, x_idx]
+    if val <= MIN_VAL or val == np.nan:
+        val = MIN_VAL * 1.05
+    elif val > MAX_VAL:
+        val = MAX_VAL * .99
+    line_source.data.update({'x': [val, val]})
+    hover_pt.data.update({'x': [xn[x_idx]], 'y': [yn[y_idx]]})
+
+
+# python callbacks
 map_fig.x_range.on_change('start', update_histogram)
 map_fig.x_range.on_change('end', update_histogram)
 map_fig.y_range.on_change('start', update_histogram)
 map_fig.y_range.on_change('end', update_histogram)
+map_fig.on_event(events.Tap, move_hist_line)
 
 select_day.on_change('value', update_data)
 
