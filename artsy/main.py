@@ -1,4 +1,6 @@
+from collections import OrderedDict
 import datetime as dt
+from functools import partial
 import logging
 from pathlib import Path
 import os
@@ -8,8 +10,9 @@ from bokeh import events
 from bokeh.colors import RGB
 from bokeh.layouts import gridplot
 from bokeh.models import (
-    Range1d, LinearColorMapper, ColorBar, FixedTicker, WheelZoomTool,
+    Range1d, LinearColorMapper, ColorBar, FixedTicker,
     ColumnDataSource, CustomJS, WMTSTileSource)
+from bokeh.models.widgets import Select, Div
 from bokeh.plotting import figure, curdoc
 from matplotlib.colors import BoundaryNorm
 from matplotlib.ticker import MaxNLocator
@@ -18,7 +21,7 @@ import numpy as np
 from tornado import gen
 
 
-MIN_VAL = 0.01
+MIN_VAL = 0
 MAX_VAL = 2
 ALPHA = 0.7
 DATA_DIRECTORY = os.getenv('MRMS_DATADIR', '~/.mrms')
@@ -38,25 +41,22 @@ def load_data(date='latest'):
     regridded_data = data_load['data'] / 25.4  # mm to in
     X = data_load['X']
     Y = data_load['Y']
-    masked_regrid = np.ma.masked_less(regridded_data, MIN_VAL).clip(
-        max=MAX_VAL)
+    masked_regrid = np.ma.masked_less(regridded_data, MIN_VAL)
     return masked_regrid, X, Y, valid_date
 
 
 def find_all_times():
     p = Path(DATA_DIRECTORY).expanduser()
-    out = {}
-    for pp in p.rglob('*.npz'):
+    out = OrderedDict()
+    for pp in sorted(p.rglob('*.npz')):
         try:
             datetime = dt.datetime.strptime(''.join(pp.parts[-4:]),
                                             '%Y%m%d%HZ.npz')
         except ValueError:
             logging.debug('%s does not conform to expected format', pp)
             continue
-        date = datetime.strftime('%Y-%m-%d')
-        if date not in out:
-            out[date] = []
-        out[date].append(datetime.strftime('%HZ'))
+        date = datetime.strftime('%Y-%m-%d %HZ')
+        out[date] = datetime
     return out
 
 
@@ -73,45 +73,23 @@ ticker = FixedTicker(ticks=levels[::3])
 cb = ColorBar(color_mapper=color_mapper, location=(0, 0),
               scale_alpha=ALPHA, ticker=ticker)
 
-masked_regrid, X, Y, valid_date = load_data()
-
-xn = X[0]
-yn = Y[:, 0]
-dw = xn[-1] - xn[0]
-dh = yn[-1] - yn[0]
-dx = xn[1] - xn[0]
-dy = yn[1] - yn[0]
-
-# make histograms
-counts, bin_edges = np.histogram(masked_regrid, bins=levels,
-                                 range=(levels.min(), levels.max()))
-bin_width = bin_edges[1] - bin_edges[0]
-bin_centers = bin_edges + bin_width / 2
-hist_sources = [ColumnDataSource(data={'x': [bin_centers[i]],
-                                       'top': [counts[i]],
-                                       'color': [color_pal[i]]})
-                for i in range(len(counts))]
-
-# bokeh plotting
-rgba_vals = sm.to_rgba(masked_regrid, bytes=True, alpha=ALPHA)
-
+# make the bokeh figures without the data yet
 width = 600
-height = int(width / 2 * dy / dx)
+height = 350
 sfmt = '%Y-%m-%d %HZ'
-title = 'MRMS Precipitation {} through {}'.format(
-    (valid_date - dt.timedelta(hours=24)).strftime(sfmt),
-    valid_date.strftime(sfmt))
-
 tools = 'pan, box_zoom, resize, reset, save'
 map_fig = figure(plot_width=width, plot_height=height,
-                 x_range=(xn[0], xn[-1]), y_range=(yn[0], yn[-1]),
                  y_axis_type=None, x_axis_type=None,
                  toolbar_location='left', tools=tools + ', wheel_zoom',
                  active_scroll='wheel_zoom',
-                 title=title)
+                 title='MRMS Precipitation')
 
-rgba_img = map_fig.image_rgba([rgba_vals], x=[xn[0]], y=[yn[0]], dw=[dw],
-                              dh=[dh])
+rgba_img_source = ColumnDataSource(data={'image': [], 'x': [], 'y': [],
+                                         'dw': [], 'dh': []})
+rgba_img = map_fig.image_rgba(image='image', x='x', y='y', dw='dw', dh='dh',
+                              source=rgba_img_source)
+
+
 # Need to use this and not bokeh.tile_providers.STAMEN_TONER
 # https://github.com/bokeh/bokeh/issues/4770
 STAMEN_TONER = WMTSTileSource(
@@ -134,49 +112,42 @@ hist_fig = figure(plot_width=height, plot_height=height,
                   active_scroll='ywheel_zoom',
                   x_range=Range1d(start=0, end=MAX_VAL))
 
+# make histograms
+bin_width = levels[1] - levels[0]
+bin_centers = levels[:-1] + bin_width / 2
+hist_sources = [ColumnDataSource(data={'x': [bin_centers[i]],
+                                       'top': [3.0e6],
+                                       'color': [color_pal[i]],
+                                       'bottom': [0],
+                                       'width': [bin_width]})
+                for i in range(len(bin_centers))]
 for source in hist_sources:
-    hist_fig.vbar(x='x', top='top', width=bin_width, bottom=0, color='color',
-                  fill_alpha=ALPHA, source=source)
+    hist_fig.vbar(x='x', top='top', width='width', bottom='bottom',
+                  color='color', fill_alpha=ALPHA, source=source)
 
-line_source = ColumnDataSource(data={'x': [-1, -1], 'y': [0, counts.max()]})
+# line and point on map showing tapped location value
+line_source = ColumnDataSource(data={'x': [-1, -1], 'y': [0, 1]})
 hist_fig.line(x='x', y='y', color='red', source=line_source, alpha=ALPHA)
+hover_pt = ColumnDataSource(data={'x': [0], 'y': [0], 'x_idx': [0],
+                                  'y_idx': [0]})
+map_fig.x(x='x', y='y', size=10, color='red', alpha=ALPHA,
+          source=hover_pt, level='overlay')
 
+file_dict = find_all_times()
+dates = list(file_dict.keys())[::-1]
+select_day = Select(title='Valid End', value=dates[0], options=dates)
+info_data = ColumnDataSource(data={'current_val': [0], 'mean': [0]})
+info_text = """
+<div class="well">
+<b>Selected Value:</b> {current_val:0.3f} <b>Mean:</b> {mean:0.3f}
+</div>
+"""
+info_div = Div(sizing_mode='scale_width')
 
-# Dynamic histogram update and bin indicator line
-pos_source = ColumnDataSource(data={
-    'bin_centers': [bin_centers], 'shape': [masked_regrid.shape[1]],
-    'bin': [np.digitize(masked_regrid, levels[:-1]).astype('uint8').ravel()],
-    'dx': [dx], 'dy': [dy], 'left': [xn[0]], 'bottom': [yn[0]]})
-
-line_callback = CustomJS(args={'source': pos_source,
-                               'lsource': line_source},
-                         code="""
-var data = source.data;
-var x = cb_obj['x'];
-var y = cb_obj['y'];
-
-var x_index = 0;
-var y_index = 0;
-
-x_index = Math.round((x - data['left'][0])/data['dx'][0]);
-y_index = Math.round((y - data['bottom'][0])/data['dy'][0]);
-var idx = y_index * data['shape'][0] + x_index;
-var bin = data['bin'][0][idx];
-var center = data['bin_centers'][0][bin - 1];
-var ldata = lsource.data;
-xi = ldata['x'];
-xi[0] = center;
-xi[1] = center;
-setTimeout(function(){lsource.change.emit()}, 100);
-""")
-
-no_line = CustomJS(args={'lsource': line_source}, code="""
-var data = lsource.data;
-xi = data['x'];
-xi[0] = -1;
-xi[1] = -1;
-lsource.change.emit();
-""")
+# Setup the updates for all the data
+local_data_source = ColumnDataSource(data={'masked_regrid': [0], 'xn': [0],
+                                           'yn': [0],
+                                           'valid_date': [dt.datetime.now()]})
 
 
 def update_histogram(attr, old, new):
@@ -186,34 +157,152 @@ def update_histogram(attr, old, new):
     except ValueError:
         pass
 
+
 @gen.coroutine
 def _update_histogram():
     left = map_fig.x_range.start
     right = map_fig.x_range.end
     bottom = map_fig.y_range.start
     top = map_fig.y_range.end
+
+    masked_regrid = local_data_source.data['masked_regrid'][0]
+    xn = local_data_source.data['xn'][0]
+    yn = local_data_source.data['yn'][0]
+
     left_idx = np.abs(xn - left).argmin()
     right_idx = np.abs(xn - right).argmin() + 1
     bottom_idx = np.abs(yn - bottom).argmin()
     top_idx = np.abs(yn - top).argmin() + 1
     logging.debug('Updating histogram...')
-
+    new_subset = masked_regrid[bottom_idx:top_idx, left_idx:right_idx]
     counts, _ = np.histogram(
-        masked_regrid[bottom_idx:top_idx, left_idx:right_idx], bins=levels,
+        new_subset.clip(max=MAX_VAL), bins=levels,
         range=(levels.min(), levels.max()))
     line_source.data.update({'y': [0, counts.max()]})
     for i, source in enumerate(hist_sources):
         source.data.update({'top': [counts[i]]})
+    logging.debug('Done updating histogram')
+
+    info_data.data.update({'mean': [float(new_subset.mean())]})
+    doc.add_next_tick_callback(_update_div_text)
 
 
-map_fig.js_on_event(events.MouseMove, line_callback)
-map_fig.js_on_event(events.MouseLeave, no_line)
+def update_map(attr, old, new):
+    try:
+        doc.add_timeout_callback(_update_histogram, 100)
+    except ValueError:
+        pass
+
+
+@gen.coroutine
+def _update_map(update_range=False):
+    logging.debug('Updating map...')
+    valid_date = local_data_source.data['valid_date'][0]
+    title = 'MRMS Precipitation {} through {}'.format(
+        (valid_date - dt.timedelta(hours=24)).strftime(sfmt),
+        valid_date.strftime(sfmt))
+    map_fig.title.text = title
+    masked_regrid = local_data_source.data['masked_regrid'][0]
+    xn = local_data_source.data['xn'][0]
+    yn = local_data_source.data['yn'][0]
+    rgba_vals = sm.to_rgba(masked_regrid, bytes=True, alpha=ALPHA)
+    dx = xn[1] - xn[0]
+    dy = yn[1] - yn[0]
+    rgba_img_source.data.update({'image': [rgba_vals],
+                                 'x': [xn[0] - dx / 2],
+                                 'y': [yn[0] - dy / 2],
+                                 'dw': [xn[-1] - xn[0] + dx],
+                                 'dh': [yn[-1] - yn[0] + dy]})
+    if update_range:
+        map_fig.x_range.start = xn[0]
+        map_fig.x_range.end = xn[-1]
+        map_fig.y_range.start = yn[0]
+        map_fig.y_range.end = yn[-1]
+    logging.debug('Done updating map')
+
+
+def update_data(attr, old, new):
+    try:
+        doc.add_timeout_callback(_update_data, 100)
+    except ValueError:
+        pass
+
+
+@gen.coroutine
+def _update_data(update_range=False):
+    logging.debug('Updating data...')
+    date = file_dict[select_day.value]
+    masked_regrid, X, Y, valid_date = load_data(date)
+    xn = X[0]
+    yn = Y[:, 0]
+    local_data_source.data.update({'masked_regrid': [masked_regrid],
+                                   'xn': [xn], 'yn': [yn],
+                                   'valid_date': [valid_date]})
+    curdoc().add_next_tick_callback(partial(_update_map, update_range))
+    curdoc().add_timeout_callback(_update_histogram, 10)
+    curdoc().add_next_tick_callback(_move_hist_line)
+    logging.debug('Done updating data')
+
+
+def move_click_marker(event):
+    try:
+        doc.add_timeout_callback(partial(_move_click_marker, event), 50)
+    except ValueError:
+        pass
+
+
+@gen.coroutine
+def _move_click_marker(event):
+    x = event.x
+    y = event.y
+
+    xn = local_data_source.data['xn'][0]
+    yn = local_data_source.data['yn'][0]
+
+    x_idx = np.abs(xn - x).argmin()
+    y_idx = np.abs(yn - y).argmin()
+
+    hover_pt.data.update({'x': [xn[x_idx]], 'y': [yn[y_idx]],
+                          'x_idx': [x_idx], 'y_idx': [y_idx]})
+    curdoc().add_next_tick_callback(_move_hist_line)
+
+
+@gen.coroutine
+def _move_hist_line():
+    x_idx = hover_pt.data['x_idx'][0]
+    y_idx = hover_pt.data['y_idx'][0]
+    masked_regrid = local_data_source.data['masked_regrid'][0]
+    val = masked_regrid[y_idx, x_idx]
+    info_data.data.update({'current_val': [float(val)]})
+    doc.add_next_tick_callback(_update_div_text)
+
+    if val <= MIN_VAL or val == np.nan:
+        val = MIN_VAL * 1.05
+    elif val > MAX_VAL:
+        val = MAX_VAL * .99
+    line_source.data.update({'x': [val, val]})
+
+
+
+@gen.coroutine
+def _update_div_text():
+    current_val = info_data.data['current_val'][0]
+    mean = info_data.data['mean'][0]
+    info_div.text = info_text.format(current_val=current_val,
+                                     mean=mean)
+
+# python callbacks
 map_fig.x_range.on_change('start', update_histogram)
 map_fig.x_range.on_change('end', update_histogram)
 map_fig.y_range.on_change('start', update_histogram)
 map_fig.y_range.on_change('end', update_histogram)
+map_fig.on_event(events.Tap, move_click_marker)
+
+select_day.on_change('value', update_data)
 
 # layout the document
-lay = gridplot([[map_fig, hist_fig]], toolbar_location='left', merge_tools=False)
+lay = gridplot([[select_day, info_div], [map_fig, hist_fig]],
+               merge_tools=False)
 doc = curdoc()
 doc.add_root(lay)
+doc.add_next_tick_callback(partial(_update_data, True))
