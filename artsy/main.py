@@ -21,7 +21,7 @@ import numpy as np
 from tornado import gen
 
 
-MIN_VAL = 0.01
+MIN_VAL = 0
 MAX_VAL = 2
 ALPHA = 0.7
 DATA_DIRECTORY = os.getenv('MRMS_DATADIR', '~/.mrms')
@@ -175,7 +175,6 @@ def _update_histogram():
     top_idx = np.abs(yn - top).argmin() + 1
     logging.debug('Updating histogram...')
     new_subset = masked_regrid[bottom_idx:top_idx, left_idx:right_idx]
-    print(new_subset.min())
     counts, _ = np.histogram(
         new_subset.clip(max=MAX_VAL), bins=levels,
         range=(levels.min(), levels.max()))
@@ -184,7 +183,7 @@ def _update_histogram():
         source.data.update({'top': [counts[i]]})
     logging.debug('Done updating histogram')
 
-    info_data.data.update({'mean': [new_subset.mean()]})
+    info_data.data.update({'mean': [float(new_subset.mean())]})
     doc.add_next_tick_callback(_update_div_text)
 
 
