@@ -12,7 +12,7 @@ from bokeh.layouts import gridplot
 from bokeh.models import (
     Range1d, LinearColorMapper, ColorBar, FixedTicker,
     ColumnDataSource, CustomJS, WMTSTileSource)
-from bokeh.models.widgets import Select, Slider
+from bokeh.models.widgets import Select, Div
 from bokeh.plotting import figure, curdoc
 from matplotlib.colors import BoundaryNorm
 from matplotlib.ticker import MaxNLocator
@@ -41,8 +41,7 @@ def load_data(date='latest'):
     regridded_data = data_load['data'] / 25.4  # mm to in
     X = data_load['X']
     Y = data_load['Y']
-    masked_regrid = np.ma.masked_less(regridded_data, MIN_VAL).clip(
-        max=MAX_VAL)
+    masked_regrid = np.ma.masked_less(regridded_data, MIN_VAL)
     return masked_regrid, X, Y, valid_date
 
 
@@ -129,13 +128,21 @@ for source in hist_sources:
 # line and point on map showing tapped location value
 line_source = ColumnDataSource(data={'x': [-1, -1], 'y': [0, 1]})
 hist_fig.line(x='x', y='y', color='red', source=line_source, alpha=ALPHA)
-hover_pt = ColumnDataSource(data={'x': [0], 'y': [0]})
+hover_pt = ColumnDataSource(data={'x': [0], 'y': [0], 'x_idx': [0],
+                                  'y_idx': [0]})
 map_fig.x(x='x', y='y', size=10, color='red', alpha=ALPHA,
           source=hover_pt, level='overlay')
 
 file_dict = find_all_times()
 dates = list(file_dict.keys())[::-1]
 select_day = Select(title='Valid End', value=dates[0], options=dates)
+info_data = ColumnDataSource(data={'current_val': [0], 'mean': [0]})
+info_text = """
+<div class="well">
+<b>Selected Value:</b> {current_val:0.3f} <b>Mean:</b> {mean:0.3f}
+</div>
+"""
+info_div = Div(sizing_mode='scale_width')
 
 # Setup the updates for all the data
 local_data_source = ColumnDataSource(data={'masked_regrid': [0], 'xn': [0],
@@ -167,14 +174,18 @@ def _update_histogram():
     bottom_idx = np.abs(yn - bottom).argmin()
     top_idx = np.abs(yn - top).argmin() + 1
     logging.debug('Updating histogram...')
-
+    new_subset = masked_regrid[bottom_idx:top_idx, left_idx:right_idx]
+    print(new_subset.min())
     counts, _ = np.histogram(
-        masked_regrid[bottom_idx:top_idx, left_idx:right_idx], bins=levels,
+        new_subset.clip(max=MAX_VAL), bins=levels,
         range=(levels.min(), levels.max()))
     line_source.data.update({'y': [0, counts.max()]})
     for i, source in enumerate(hist_sources):
         source.data.update({'top': [counts[i]]})
     logging.debug('Done updating histogram')
+
+    info_data.data.update({'mean': [new_subset.mean()]})
+    doc.add_next_tick_callback(_update_div_text)
 
 
 def update_map(attr, old, new):
@@ -217,6 +228,7 @@ def update_data(attr, old, new):
     except ValueError:
         pass
 
+
 @gen.coroutine
 def _update_data(update_range=False):
     logging.debug('Updating data...')
@@ -229,47 +241,68 @@ def _update_data(update_range=False):
                                    'valid_date': [valid_date]})
     curdoc().add_next_tick_callback(partial(_update_map, update_range))
     curdoc().add_timeout_callback(_update_histogram, 10)
+    curdoc().add_next_tick_callback(_move_hist_line)
     logging.debug('Done updating data')
 
 
-def move_hist_line(event):
+def move_click_marker(event):
     try:
-        doc.add_timeout_callback(partial(_move_hist_line, event), 50)
+        doc.add_timeout_callback(partial(_move_click_marker, event), 50)
     except ValueError:
         pass
 
 
 @gen.coroutine
-def _move_hist_line(event):
+def _move_click_marker(event):
     x = event.x
     y = event.y
 
-    masked_regrid = local_data_source.data['masked_regrid'][0]
     xn = local_data_source.data['xn'][0]
     yn = local_data_source.data['yn'][0]
 
     x_idx = np.abs(xn - x).argmin()
     y_idx = np.abs(yn - y).argmin()
+
+    hover_pt.data.update({'x': [xn[x_idx]], 'y': [yn[y_idx]],
+                          'x_idx': [x_idx], 'y_idx': [y_idx]})
+    curdoc().add_next_tick_callback(_move_hist_line)
+
+
+@gen.coroutine
+def _move_hist_line():
+    x_idx = hover_pt.data['x_idx'][0]
+    y_idx = hover_pt.data['y_idx'][0]
+    masked_regrid = local_data_source.data['masked_regrid'][0]
     val = masked_regrid[y_idx, x_idx]
+    info_data.data.update({'current_val': [float(val)]})
+    doc.add_next_tick_callback(_update_div_text)
+
     if val <= MIN_VAL or val == np.nan:
         val = MIN_VAL * 1.05
     elif val > MAX_VAL:
         val = MAX_VAL * .99
     line_source.data.update({'x': [val, val]})
-    hover_pt.data.update({'x': [xn[x_idx]], 'y': [yn[y_idx]]})
 
+
+
+@gen.coroutine
+def _update_div_text():
+    current_val = info_data.data['current_val'][0]
+    mean = info_data.data['mean'][0]
+    info_div.text = info_text.format(current_val=current_val,
+                                     mean=mean)
 
 # python callbacks
 map_fig.x_range.on_change('start', update_histogram)
 map_fig.x_range.on_change('end', update_histogram)
 map_fig.y_range.on_change('start', update_histogram)
 map_fig.y_range.on_change('end', update_histogram)
-map_fig.on_event(events.Tap, move_hist_line)
+map_fig.on_event(events.Tap, move_click_marker)
 
 select_day.on_change('value', update_data)
 
 # layout the document
-lay = gridplot([[select_day], [map_fig, hist_fig]], toolbar_location='left',
+lay = gridplot([[select_day, info_div], [map_fig, hist_fig]],
                merge_tools=False)
 doc = curdoc()
 doc.add_root(lay)
