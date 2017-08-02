@@ -1,4 +1,6 @@
+from collections import OrderedDict
 import datetime as dt
+from functools import partial
 import logging
 from pathlib import Path
 import os
@@ -8,8 +10,9 @@ from bokeh import events
 from bokeh.colors import RGB
 from bokeh.layouts import gridplot
 from bokeh.models import (
-    Range1d, LinearColorMapper, ColorBar, FixedTicker, WheelZoomTool,
+    Range1d, LinearColorMapper, ColorBar, FixedTicker,
     ColumnDataSource, CustomJS, WMTSTileSource)
+from bokeh.models.widgets import Select, Slider
 from bokeh.plotting import figure, curdoc
 from matplotlib.colors import BoundaryNorm
 from matplotlib.ticker import MaxNLocator
@@ -45,18 +48,16 @@ def load_data(date='latest'):
 
 def find_all_times():
     p = Path(DATA_DIRECTORY).expanduser()
-    out = {}
-    for pp in p.rglob('*.npz'):
+    out = OrderedDict()
+    for pp in sorted(p.rglob('*.npz')):
         try:
             datetime = dt.datetime.strptime(''.join(pp.parts[-4:]),
                                             '%Y%m%d%HZ.npz')
         except ValueError:
             logging.debug('%s does not conform to expected format', pp)
             continue
-        date = datetime.strftime('%Y-%m-%d')
-        if date not in out:
-            out[date] = []
-        out[date].append(datetime.strftime('%HZ'))
+        date = datetime.strftime('%Y-%m-%d %HZ')
+        out[date] = datetime
     return out
 
 
@@ -73,6 +74,7 @@ ticker = FixedTicker(ticks=levels[::3])
 cb = ColorBar(color_mapper=color_mapper, location=(0, 0),
               scale_alpha=ALPHA, ticker=ticker)
 
+# make the bokeh figures without the data yet
 width = 600
 height = 350
 sfmt = '%Y-%m-%d %HZ'
@@ -127,11 +129,11 @@ for source in hist_sources:
 line_source = ColumnDataSource(data={'x': [-1, -1], 'y': [0, 1]})
 hist_fig.line(x='x', y='y', color='red', source=line_source, alpha=ALPHA)
 
+file_dict = find_all_times()
+dates = list(file_dict.keys())[::-1]
+select_day = Select(title='Valid Date', value=dates[0], options=dates)
 
-local_data_source = ColumnDataSource(data={'masked_regrid': [0], 'xn': [0],
-                                           'yn': [0],
-                                           'valid_date': [dt.datetime.now()]})
-
+# Setup callbacks for moving line on histogram
 pos_source = ColumnDataSource(data={
     'bin_centers': [bin_centers], 'shape': [0],
     'bin': [0], 'dx': [0], 'dy': [0], 'left': [0], 'bottom': [0]})
@@ -167,12 +169,19 @@ lsource.change.emit();
 """)
 
 
+# Setup the updates for all the data
+local_data_source = ColumnDataSource(data={'masked_regrid': [0], 'xn': [0],
+                                           'yn': [0],
+                                           'valid_date': [dt.datetime.now()]})
+
+
 def update_histogram(attr, old, new):
     # makes it so only one callback added per 100 ms
     try:
         doc.add_timeout_callback(_update_histogram, 100)
     except ValueError:
         pass
+
 
 @gen.coroutine
 def _update_histogram():
@@ -197,6 +206,7 @@ def _update_histogram():
     line_source.data.update({'y': [0, counts.max()]})
     for i, source in enumerate(hist_sources):
         source.data.update({'top': [counts[i]]})
+    logging.debug('Done updating histogram')
 
 
 def update_map(attr, old, new):
@@ -207,7 +217,8 @@ def update_map(attr, old, new):
 
 
 @gen.coroutine
-def _update_map():
+def _update_map(update_range=False):
+    logging.debug('Updating map...')
     valid_date = local_data_source.data['valid_date'][0]
     title = 'MRMS Precipitation {} through {}'.format(
         (valid_date - dt.timedelta(hours=24)).strftime(sfmt),
@@ -220,26 +231,38 @@ def _update_map():
     rgba_img_source.data.update({'image': [rgba_vals], 'x': [xn[0]],
                                  'y': [yn[0]], 'dw': [xn[-1] - xn[0]],
                                  'dh': [yn[-1] - yn[0]]})
-    map_fig.x_range.start = xn[0]
-    map_fig.x_range.end = xn[-1]
-    map_fig.y_range.start = yn[0]
-    map_fig.y_range.end = yn[-1]
+    if update_range:
+        map_fig.x_range.start = xn[0]
+        map_fig.x_range.end = xn[-1]
+        map_fig.y_range.start = yn[0]
+        map_fig.y_range.end = yn[-1]
+    logging.debug('Done updating map')
 
+
+def update_data(attr, old, new):
+    try:
+        doc.add_timeout_callback(_update_data, 100)
+    except ValueError:
+        pass
 
 @gen.coroutine
-def _update_data():
-    masked_regrid, X, Y, valid_date = load_data()
+def _update_data(update_range=False):
+    logging.debug('Updating data...')
+    date = file_dict[select_day.value]
+    masked_regrid, X, Y, valid_date = load_data(date)
     xn = X[0]
     yn = Y[:, 0]
     local_data_source.data.update({'masked_regrid': [masked_regrid],
                                    'xn': [xn], 'yn': [yn],
-                                   'valid_data': [valid_date]})
+                                   'valid_date': [valid_date]})
     pos_source.data.update({
         'shape': [masked_regrid.shape[1]],
         'bin': [np.digitize(masked_regrid, levels[:-1]).astype('uint8').ravel()],
         'dx': [xn[1] - xn[0]], 'dy': [yn[1] - yn[0]],
         'left': [xn[0]], 'bottom': [yn[0]]})
-    curdoc().add_next_tick_callback(_update_map)
+    curdoc().add_next_tick_callback(partial(_update_map, update_range))
+    curdoc().add_timeout_callback(_update_histogram, 10)
+    logging.debug('Done updating data')
 
 
 map_fig.js_on_event(events.MouseMove, line_callback)
@@ -249,10 +272,11 @@ map_fig.x_range.on_change('end', update_histogram)
 map_fig.y_range.on_change('start', update_histogram)
 map_fig.y_range.on_change('end', update_histogram)
 
+select_day.on_change('value', update_data)
 
 # layout the document
-lay = gridplot([[map_fig, hist_fig]], toolbar_location='left',
+lay = gridplot([[select_day], [map_fig, hist_fig]], toolbar_location='left',
                merge_tools=False)
 doc = curdoc()
 doc.add_root(lay)
-doc.add_next_tick_callback(_update_data)
+doc.add_next_tick_callback(partial(_update_data, True))
