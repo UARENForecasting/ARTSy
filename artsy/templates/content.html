@@ -1,0 +1,22 @@
+<div class="container" id="bokeh-container">
+  <div class="row">
+    <div class="col-md-12">
+      {% for row in panels %}
+        <div class="row">
+          {% if row|length == 2 %}
+            <div class="col-xs-12 col-lg-6">
+              {{ row[0] | safe }}
+            </div>
+            <div class="col-xs-12 col-lg-6">
+              {{ row[1] | safe }}
+            </div>
+          {% else %}
+            <div class="col-md-12">
+              {{ row[0] | safe }}
+            </div>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
