@@ -8,10 +8,10 @@ import os
 
 from bokeh import events
 from bokeh.colors import RGB
-from bokeh.layouts import gridplot
+from bokeh.layouts import layout
 from bokeh.models import (
     Range1d, LinearColorMapper, ColorBar, FixedTicker,
-    ColumnDataSource, CustomJS, WMTSTileSource)
+    ColumnDataSource, WMTSTileSource, Spacer)
 from bokeh.models.widgets import Select, Div
 from bokeh.plotting import figure, curdoc
 from matplotlib.colors import BoundaryNorm
@@ -22,7 +22,7 @@ from tornado import gen
 
 
 MIN_VAL = 0
-MAX_VAL = 2
+MAX_VAL = 3
 ALPHA = 0.7
 DATA_DIRECTORY = os.getenv('MRMS_DATADIR', '~/.mrms')
 
@@ -61,7 +61,7 @@ def find_all_times():
 
 
 # setup the coloring
-levels = MaxNLocator(nbins=21).tick_values(0, MAX_VAL)
+levels = MaxNLocator(nbins=10*MAX_VAL + 1).tick_values(0, MAX_VAL)
 cmap = get_cmap('viridis')
 norm = BoundaryNorm(levels, ncolors=cmap.N, clip=True)
 sm = ScalarMappable(norm=norm, cmap=cmap)
@@ -74,8 +74,8 @@ cb = ColorBar(color_mapper=color_mapper, location=(0, 0),
               scale_alpha=ALPHA, ticker=ticker)
 
 # make the bokeh figures without the data yet
-width = 600
-height = 350
+width = 900
+height = 525
 sfmt = '%Y-%m-%d %HZ'
 tools = 'pan, box_zoom, reset, save'
 map_fig = figure(plot_width=width, plot_height=height,
@@ -106,8 +106,10 @@ STAMEN_TONER = WMTSTileSource(
 map_fig.add_tile(STAMEN_TONER)
 map_fig.add_layout(cb, 'right')
 
+hist_height = 400
+hist_width = 500
 # Make the histogram figure
-hist_fig = figure(plot_width=height, plot_height=height,
+hist_fig = figure(plot_width=hist_width, plot_height=hist_height,
                   toolbar_location='right',
                   x_axis_label='Precipitation (inches)',
                   y_axis_label='Counts', tools=tools + ', ywheel_zoom',
@@ -303,8 +305,12 @@ map_fig.on_event(events.Tap, move_click_marker)
 select_day.on_change('value', update_data)
 
 # layout the document
-lay = gridplot([[select_day, info_div], [map_fig, hist_fig]],
-               merge_tools=False)
+lay = layout([
+    [map_fig],
+    [Spacer(width=50), [select_day, info_div], Spacer(width=50),
+     hist_fig]])
+
 doc = curdoc()
+doc.template_variables.update(max_val=MAX_VAL)
 doc.add_root(lay)
 doc.add_next_tick_callback(partial(_update_data, True))
