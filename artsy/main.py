@@ -77,7 +77,7 @@ cb = ColorBar(color_mapper=color_mapper, location=(0, 0),
 width = 600
 height = 350
 sfmt = '%Y-%m-%d %HZ'
-tools = 'pan, box_zoom, resize, reset, save'
+tools = 'pan, box_zoom, reset, save'
 map_fig = figure(plot_width=width, plot_height=height,
                  y_axis_type=None, x_axis_type=None,
                  toolbar_location='left', tools=tools + ', wheel_zoom',
@@ -93,7 +93,9 @@ rgba_img = map_fig.image_rgba(image='image', x='x', y='y', dw='dw', dh='dh',
 # Need to use this and not bokeh.tile_providers.STAMEN_TONER
 # https://github.com/bokeh/bokeh/issues/4770
 STAMEN_TONER = WMTSTileSource(
-    url='https://stamen-tiles.a.ssl.fastly.net/toner-lite/{Z}/{X}/{Y}.png',
+    url=(os.getenv('TILE_SOURCE',
+                   'https://stamen-tiles.a.ssl.fastly.net/toner-lite') +
+         '/{Z}/{X}/{Y}.png'),
     attribution=(
         'Map tiles by <a href="http://stamen.com">Stamen Design</a>, '
         'under <a href="http://creativecommons.org/licenses/by/3.0">CC BY 3.0</a>. '
