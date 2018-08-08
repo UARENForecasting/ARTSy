@@ -11,10 +11,10 @@ from bokeh.colors import RGB
 from bokeh.layouts import layout
 from bokeh.models import (
     Range1d, LinearColorMapper, ColorBar, FixedTicker,
-    ColumnDataSource, WMTSTileSource, Spacer)
+    ColumnDataSource, WMTSTileSource)
 from bokeh.models.widgets import Select, Div
 from bokeh.plotting import figure, curdoc
-from matplotlib.colors import BoundaryNorm
+from matplotlib.colors import Normalize
 from matplotlib.ticker import MaxNLocator
 from matplotlib.cm import ScalarMappable, get_cmap
 import numpy as np
@@ -23,6 +23,7 @@ from tornado import gen
 
 MIN_VAL = 0
 MAX_VAL = 3
+GREY_THRESHOLD = 0.01
 ALPHA = 0.7
 DATA_DIRECTORY = os.getenv('MRMS_DATADIR', '~/.mrms')
 
@@ -63,13 +64,18 @@ def find_all_times():
 # setup the coloring
 levels = MaxNLocator(nbins=10*MAX_VAL + 1).tick_values(0, MAX_VAL)
 cmap = get_cmap('viridis')
-norm = BoundaryNorm(levels, ncolors=cmap.N, clip=True)
+cmap.set_bad(color='k')
+cmap.set_under(color='k')
+cmap.set_over(color='w')
+norm = Normalize(vmin=0, vmax=MAX_VAL, clip=False)
 sm = ScalarMappable(norm=norm, cmap=cmap)
 color_pal = [RGB(*val).to_hex() for val in
              sm.to_rgba(levels, bytes=True, norm=True)[:-1]]
 color_mapper = LinearColorMapper(color_pal, low=sm.get_clim()[0],
                                  high=sm.get_clim()[1])
-ticker = FixedTicker(ticks=levels[::3])
+l = levels.copy()[::3]
+l[0] = GREY_THRESHOLD
+ticker = FixedTicker(ticks=l)
 cb = ColorBar(color_mapper=color_mapper, location=(0, 0),
               scale_alpha=ALPHA, ticker=ticker)
 
@@ -214,7 +220,9 @@ def _update_map(update_range=False):
         (valid_date - dt.timedelta(hours=24)).strftime(sfmt),
         valid_date.strftime(sfmt))
     map_fig.title.text = title
-    masked_regrid = local_data_source.data['masked_regrid'][0]
+    masked_regrid = local_data_source.data['masked_regrid'][0].copy()
+    masked_regrid = np.ma.masked_where(masked_regrid < GREY_THRESHOLD,
+                                       masked_regrid)
     xn = local_data_source.data['xn'][0]
     yn = local_data_source.data['yn'][0]
     rgba_vals = sm.to_rgba(masked_regrid, bytes=True, alpha=ALPHA)
@@ -319,6 +327,7 @@ lay = layout([
      hist_fig]], sizing_mode='scale_width')
 
 doc = curdoc()
-doc.template_variables.update(max_val=MAX_VAL)
+doc.title = 'UA HAS ARTSy'
+doc.template_variables.update(max_val=MAX_VAL, min_val=GREY_THRESHOLD)
 doc.add_root(lay)
 doc.add_next_tick_callback(partial(_update_data, True))
