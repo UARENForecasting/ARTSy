@@ -74,8 +74,8 @@ cb = ColorBar(color_mapper=color_mapper, location=(0, 0),
               scale_alpha=ALPHA, ticker=ticker)
 
 # make the bokeh figures without the data yet
-width = 900
-height = 538
+width = 1024
+height = int(0.6 * width)
 sfmt = '%Y-%m-%d %HZ'
 tools = 'pan, box_zoom, reset, save'
 map_fig = figure(plot_width=width, plot_height=height,
@@ -86,7 +86,7 @@ map_fig = figure(plot_width=width, plot_height=height,
 
 map_fig.xaxis.axis_label = (
     'Data from http://mrms.ncep.noaa.gov/data. Map tiles from Stamen Design.\n'
-    'Plot generated with Bokeh by W. Holmgren, M. Leuthold, A. Lorenzo, UA HAS'
+    'Plot generated with Bokeh by A. Lorenzo, W. Holmgren, M. Leuthold, UA HAS'
 )
 map_fig.xaxis.axis_label_text_font_size = '8pt'
 map_fig.xaxis.axis_line_alpha = 0
@@ -112,8 +112,8 @@ STAMEN_TONER = WMTSTileSource(
 map_fig.add_tile(STAMEN_TONER)
 map_fig.add_layout(cb, 'right')
 
-hist_height = 400
-hist_width = 500
+hist_height = 200
+hist_width = 400
 # Make the histogram figure
 hist_fig = figure(plot_width=hist_width, plot_height=hist_height,
                   toolbar_location='right',
@@ -143,16 +143,18 @@ hover_pt = ColumnDataSource(data={'x': [0], 'y': [0], 'x_idx': [0],
 map_fig.x(x='x', y='y', size=10, color='red', alpha=ALPHA,
           source=hover_pt, level='overlay')
 
+widget_width = 300
 file_dict = find_all_times()
 dates = list(file_dict.keys())[::-1]
-select_day = Select(title='Valid End', value=dates[0], options=dates)
+select_day = Select(title='Valid End', value=dates[0], options=dates,
+                    width=widget_width)
 info_data = ColumnDataSource(data={'current_val': [0], 'mean': [0]})
 info_text = """
 <div class="well">
 <b>Selected Value:</b> {current_val:0.3f} <b>Mean:</b> {mean:0.3f}
 </div>
 """
-info_div = Div(sizing_mode='scale_width')
+info_div = Div(width=widget_width)
 
 # Setup the updates for all the data
 local_data_source = ColumnDataSource(data={'masked_regrid': [0], 'xn': [0],
@@ -313,8 +315,8 @@ select_day.on_change('value', update_data)
 # layout the document
 lay = layout([
     [map_fig],
-    [Spacer(width=50), [select_day, info_div], Spacer(width=50),
-     hist_fig]])
+    [[select_day, info_div],
+     hist_fig]], sizing_mode='scale_width')
 
 doc = curdoc()
 doc.template_variables.update(max_val=MAX_VAL)
