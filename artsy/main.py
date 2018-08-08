@@ -126,16 +126,23 @@ hist_fig = figure(plot_width=hist_width, plot_height=hist_height,
                   x_axis_label='Precipitation (inches)',
                   y_axis_label='Counts', tools=tools + ', ywheel_zoom',
                   active_scroll='ywheel_zoom',
-                  x_range=Range1d(start=0, end=MAX_VAL))
+                  x_range=Range1d(start=-.01, end=MAX_VAL))
 
 # make histograms
-bin_width = levels[1] - levels[0]
-bin_centers = levels[:-1] + bin_width / 2
+bin_width = [levels[1] - levels[0]] * len(levels)
+zero_width = 0.02
+bin_width.insert(0, zero_width)
+bin_centers = levels[:-1] + bin_width[-1] / 2
+bin_centers = np.insert(bin_centers, 0, 0)
+bin_centers[1] = bin_centers[1] + zero_width / 4
+bin_width[1] = bin_width[1] - zero_width / 2
+cpal = color_pal.copy()
+cpal.insert(0, '#000000')
 hist_sources = [ColumnDataSource(data={'x': [bin_centers[i]],
                                        'top': [3.0e6],
-                                       'color': [color_pal[i]],
+                                       'color': [cpal[i]],
                                        'bottom': [0],
-                                       'width': [bin_width]})
+                                       'width': [bin_width[i]]})
                 for i in range(len(bin_centers))]
 for source in hist_sources:
     hist_fig.vbar(x='x', top='top', width='width', bottom='bottom',
@@ -193,8 +200,9 @@ def _update_histogram():
     top_idx = np.abs(yn - top).argmin() + 1
     logging.debug('Updating histogram...')
     new_subset = masked_regrid[bottom_idx:top_idx, left_idx:right_idx]
+    lev = np.insert(levels, 1, GREY_THRESHOLD)
     counts, _ = np.histogram(
-        new_subset.clip(max=MAX_VAL), bins=levels,
+        new_subset.clip(max=MAX_VAL), bins=lev,
         range=(levels.min(), levels.max()))
     line_source.data.update({'y': [0, counts.max()]})
     for i, source in enumerate(hist_sources):
