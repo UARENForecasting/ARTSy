@@ -75,21 +75,21 @@ cb = ColorBar(color_mapper=color_mapper, location=(0, 0),
 
 # make the bokeh figures without the data yet
 width = 900
-height = 525
+height = 538
 sfmt = '%Y-%m-%d %HZ'
 tools = 'pan, box_zoom, reset, save'
 map_fig = figure(plot_width=width, plot_height=height,
-                 y_axis_type='mercator', x_axis_type='mercator',
+                 y_axis_type=None, x_axis_type='mercator',
                  toolbar_location='left', tools=tools + ', wheel_zoom',
                  active_scroll='wheel_zoom',
                  title='MRMS Precipitation (inches)')
 
 map_fig.xaxis.axis_label = (
-    'Data from http://mrms.ncep.noaa.gov/data. '
-    'Map tiles from Stamen Design.\n'
-    'Plot generated with Bokeh. '
-    'Plot by W. Holmgren, M. Leuthold, A. Lorenzo, UA HAS')
+    'Data from http://mrms.ncep.noaa.gov/data. Map tiles from Stamen Design.\n'
+    'Plot generated with Bokeh by W. Holmgren, M. Leuthold, A. Lorenzo, UA HAS'
+)
 map_fig.xaxis.axis_label_text_font_size = '8pt'
+map_fig.xaxis.axis_line_alpha = 0
 
 rgba_img_source = ColumnDataSource(data={'image': [], 'x': [], 'y': [],
                                          'dw': [], 'dh': []})
@@ -104,7 +104,7 @@ STAMEN_TONER = WMTSTileSource(
     attribution=(
         'Map tiles by <a href="http://stamen.com">Stamen Design</a>, '
         'under <a href="http://creativecommons.org/licenses/by/3.0">CC BY 3.0</a>. '
-        'Data by <a href="http://openstreetmap.org">OpenStreetMap</a>, '
+        'Map data by <a href="http://openstreetmap.org">OpenStreetMap</a>, '
         'under <a href="http://www.openstreetmap.org/copyright">ODbL</a>'
     )
 )
@@ -214,8 +214,6 @@ def _update_map(update_range=False):
     map_fig.title.text = title
     masked_regrid = local_data_source.data['masked_regrid'][0]
     xn = local_data_source.data['xn'][0]
-    if xn.max() > 0:
-        xn -= 2*3.14159*6378137
     yn = local_data_source.data['yn'][0]
     rgba_vals = sm.to_rgba(masked_regrid, bytes=True, alpha=ALPHA)
     dx = xn[1] - xn[0]
