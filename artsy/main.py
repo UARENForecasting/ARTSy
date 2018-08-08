@@ -8,13 +8,13 @@ import os
 
 from bokeh import events
 from bokeh.colors import RGB
-from bokeh.layouts import gridplot
+from bokeh.layouts import layout
 from bokeh.models import (
     Range1d, LinearColorMapper, ColorBar, FixedTicker,
-    ColumnDataSource, CustomJS, WMTSTileSource)
+    ColumnDataSource, WMTSTileSource)
 from bokeh.models.widgets import Select, Div
 from bokeh.plotting import figure, curdoc
-from matplotlib.colors import BoundaryNorm
+from matplotlib.colors import Normalize
 from matplotlib.ticker import MaxNLocator
 from matplotlib.cm import ScalarMappable, get_cmap
 import numpy as np
@@ -22,7 +22,8 @@ from tornado import gen
 
 
 MIN_VAL = 0
-MAX_VAL = 2
+MAX_VAL = 3
+GREY_THRESHOLD = 0.01
 ALPHA = 0.7
 DATA_DIRECTORY = os.getenv('MRMS_DATADIR', '~/.mrms')
 
@@ -61,28 +62,40 @@ def find_all_times():
 
 
 # setup the coloring
-levels = MaxNLocator(nbins=21).tick_values(0, MAX_VAL)
+levels = MaxNLocator(nbins=10*MAX_VAL + 1).tick_values(0, MAX_VAL)
 cmap = get_cmap('viridis')
-norm = BoundaryNorm(levels, ncolors=cmap.N, clip=True)
+cmap.set_bad(color='k')
+cmap.set_under(color='k')
+cmap.set_over(color='w')
+norm = Normalize(vmin=0, vmax=MAX_VAL, clip=False)
 sm = ScalarMappable(norm=norm, cmap=cmap)
 color_pal = [RGB(*val).to_hex() for val in
              sm.to_rgba(levels, bytes=True, norm=True)[:-1]]
 color_mapper = LinearColorMapper(color_pal, low=sm.get_clim()[0],
                                  high=sm.get_clim()[1])
-ticker = FixedTicker(ticks=levels[::3])
+l = levels.copy()[::3]
+l[0] = GREY_THRESHOLD
+ticker = FixedTicker(ticks=l)
 cb = ColorBar(color_mapper=color_mapper, location=(0, 0),
               scale_alpha=ALPHA, ticker=ticker)
 
 # make the bokeh figures without the data yet
-width = 600
-height = 350
+width = 1024
+height = int(0.6 * width)
 sfmt = '%Y-%m-%d %HZ'
-tools = 'pan, box_zoom, resize, reset, save'
+tools = 'pan, box_zoom, reset, save'
 map_fig = figure(plot_width=width, plot_height=height,
-                 y_axis_type=None, x_axis_type=None,
+                 y_axis_type=None, x_axis_type='mercator',
                  toolbar_location='left', tools=tools + ', wheel_zoom',
                  active_scroll='wheel_zoom',
-                 title='MRMS Precipitation')
+                 title='MRMS Precipitation (inches)')
+
+map_fig.xaxis.axis_label = (
+    'Data from http://mrms.ncep.noaa.gov/data. Map tiles from Stamen Design.\n'
+    'Plot generated with Bokeh by A. Lorenzo, W. Holmgren, M. Leuthold, UA HAS'
+)
+map_fig.xaxis.axis_label_text_font_size = '8pt'
+map_fig.xaxis.axis_line_alpha = 0
 
 rgba_img_source = ColumnDataSource(data={'image': [], 'x': [], 'y': [],
                                          'dw': [], 'dh': []})
@@ -90,36 +103,46 @@ rgba_img = map_fig.image_rgba(image='image', x='x', y='y', dw='dw', dh='dh',
                               source=rgba_img_source)
 
 
-# Need to use this and not bokeh.tile_providers.STAMEN_TONER
-# https://github.com/bokeh/bokeh/issues/4770
 STAMEN_TONER = WMTSTileSource(
-    url='https://stamen-tiles.a.ssl.fastly.net/toner-lite/{Z}/{X}/{Y}.png',
+    url=(os.getenv('TILE_SOURCE',
+                   'https://stamen-tiles.a.ssl.fastly.net/toner-lite') +
+         '/{Z}/{X}/{Y}.png'),
     attribution=(
         'Map tiles by <a href="http://stamen.com">Stamen Design</a>, '
         'under <a href="http://creativecommons.org/licenses/by/3.0">CC BY 3.0</a>. '
-        'Data by <a href="http://openstreetmap.org">OpenStreetMap</a>, '
+        'Map data by <a href="http://openstreetmap.org">OpenStreetMap</a>, '
         'under <a href="http://www.openstreetmap.org/copyright">ODbL</a>'
     )
 )
+
 map_fig.add_tile(STAMEN_TONER)
 map_fig.add_layout(cb, 'right')
 
+hist_height = 200
+hist_width = 400
 # Make the histogram figure
-hist_fig = figure(plot_width=height, plot_height=height,
+hist_fig = figure(plot_width=hist_width, plot_height=hist_height,
                   toolbar_location='right',
                   x_axis_label='Precipitation (inches)',
                   y_axis_label='Counts', tools=tools + ', ywheel_zoom',
                   active_scroll='ywheel_zoom',
-                  x_range=Range1d(start=0, end=MAX_VAL))
+                  x_range=Range1d(start=-.01, end=MAX_VAL))
 
 # make histograms
-bin_width = levels[1] - levels[0]
-bin_centers = levels[:-1] + bin_width / 2
+bin_width = [levels[1] - levels[0]] * len(levels)
+zero_width = 0.02
+bin_width.insert(0, zero_width)
+bin_centers = levels[:-1] + bin_width[-1] / 2
+bin_centers = np.insert(bin_centers, 0, 0)
+bin_centers[1] = bin_centers[1] + zero_width / 4
+bin_width[1] = bin_width[1] - zero_width / 2
+cpal = color_pal.copy()
+cpal.insert(0, '#000000')
 hist_sources = [ColumnDataSource(data={'x': [bin_centers[i]],
                                        'top': [3.0e6],
-                                       'color': [color_pal[i]],
+                                       'color': [cpal[i]],
                                        'bottom': [0],
-                                       'width': [bin_width]})
+                                       'width': [bin_width[i]]})
                 for i in range(len(bin_centers))]
 for source in hist_sources:
     hist_fig.vbar(x='x', top='top', width='width', bottom='bottom',
@@ -133,16 +156,18 @@ hover_pt = ColumnDataSource(data={'x': [0], 'y': [0], 'x_idx': [0],
 map_fig.x(x='x', y='y', size=10, color='red', alpha=ALPHA,
           source=hover_pt, level='overlay')
 
+widget_width = 300
 file_dict = find_all_times()
 dates = list(file_dict.keys())[::-1]
-select_day = Select(title='Valid End', value=dates[0], options=dates)
+select_day = Select(title='Valid End', value=dates[0], options=dates,
+                    width=widget_width)
 info_data = ColumnDataSource(data={'current_val': [0], 'mean': [0]})
 info_text = """
 <div class="well">
 <b>Selected Value:</b> {current_val:0.3f} <b>Mean:</b> {mean:0.3f}
 </div>
 """
-info_div = Div(sizing_mode='scale_width')
+info_div = Div(width=widget_width)
 
 # Setup the updates for all the data
 local_data_source = ColumnDataSource(data={'masked_regrid': [0], 'xn': [0],
@@ -175,8 +200,9 @@ def _update_histogram():
     top_idx = np.abs(yn - top).argmin() + 1
     logging.debug('Updating histogram...')
     new_subset = masked_regrid[bottom_idx:top_idx, left_idx:right_idx]
+    lev = np.insert(levels, 1, GREY_THRESHOLD)
     counts, _ = np.histogram(
-        new_subset.clip(max=MAX_VAL), bins=levels,
+        new_subset.clip(max=MAX_VAL), bins=lev,
         range=(levels.min(), levels.max()))
     line_source.data.update({'y': [0, counts.max()]})
     for i, source in enumerate(hist_sources):
@@ -198,11 +224,13 @@ def update_map(attr, old, new):
 def _update_map(update_range=False):
     logging.debug('Updating map...')
     valid_date = local_data_source.data['valid_date'][0]
-    title = 'MRMS Precipitation {} through {}'.format(
+    title = 'MRMS Precipitation (inches) {} through {}'.format(
         (valid_date - dt.timedelta(hours=24)).strftime(sfmt),
         valid_date.strftime(sfmt))
     map_fig.title.text = title
-    masked_regrid = local_data_source.data['masked_regrid'][0]
+    masked_regrid = local_data_source.data['masked_regrid'][0].copy()
+    masked_regrid = np.ma.masked_where(masked_regrid < GREY_THRESHOLD,
+                                       masked_regrid)
     xn = local_data_source.data['xn'][0]
     yn = local_data_source.data['yn'][0]
     rgba_vals = sm.to_rgba(masked_regrid, bytes=True, alpha=ALPHA)
@@ -301,8 +329,13 @@ map_fig.on_event(events.Tap, move_click_marker)
 select_day.on_change('value', update_data)
 
 # layout the document
-lay = gridplot([[select_day, info_div], [map_fig, hist_fig]],
-               merge_tools=False)
+lay = layout([
+    [map_fig],
+    [[select_day, info_div],
+     hist_fig]], sizing_mode='scale_width')
+
 doc = curdoc()
+doc.title = 'UA HAS ARTSy'
+doc.template_variables.update(max_val=MAX_VAL, min_val=GREY_THRESHOLD)
 doc.add_root(lay)
 doc.add_next_tick_callback(partial(_update_data, True))
