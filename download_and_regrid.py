@@ -107,7 +107,7 @@ def main():
     argparser.add_argument('--save-dir', help='Directory to save data to',
                            default='~/.mrms')
     argparser.add_argument(
-        '--bbox', default='31,37,245,257',
+        '--bbox', default='30,37.5,245,257',
         help='The lat/lon bounding box for the data subset like lat0,lat1,lon0,lon1')  # NOQA
     argparser.add_argument('-o', '--overwrite', action='store_true',
                            help='Overwrite file if already exists')

@@ -81,7 +81,7 @@ cb = ColorBar(color_mapper=color_mapper, location=(0, 0),
 
 # make the bokeh figures without the data yet
 width = 1024
-height = int(0.6 * width)
+height = int(0.73 * width)
 sfmt = '%Y-%m-%d %HZ'
 tools = 'pan, box_zoom, reset, save'
 map_fig = figure(plot_width=width, plot_height=height,
