@@ -1,5 +1,5 @@
 bokeh==0.13.0
 matplotlib==2.2.2
-numpy==1.15.0
+numpy==1.22.0
 requests==2.20.0
 tornado==5.1
