@@ -2,6 +2,10 @@
 """
 Download the MRMS data, get only the given area, project to web mercator,
 and regrid onto a regular grid for later plotting.
+
+Note: worked for me only if I downgraded numpy to 1.16.0
+- had an issue with the pygrib install (I used pygrib==2.1.3)
+- when install scipy (1.7.3, pip uninstalled and updated numpy to 1.21.6)
 """
 import argparse
 import datetime as dt
@@ -30,12 +34,12 @@ def webmerc_proj(lat, lon):
 
 def download_data(date, tmpfile):
     """Download the MRMS correlated precip data from NCEP"""
-    base_url = 'http://mrms.ncep.noaa.gov/data/2D/GaugeCorr_QPE_24H/'
+    base_url = 'http://mrms.ncep.noaa.gov/data/2D/RadarOnly_QPE_01H/'
     if date == 'latest':
         timestr = '.latest'
     else:
         timestr = date.strftime('_00.00_%Y%m%d-%H%M%S')
-    filename = 'MRMS_GaugeCorr_QPE_24H{timestr}.grib2.gz'.format(
+    filename = 'MRMS_RadarOnly_QPE_01H{timestr}.grib2.gz'.format(
             timestr=timestr)
     logging.info('Making request for %s', filename)
     r = requests.get(base_url + filename)
