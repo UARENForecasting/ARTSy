@@ -25,7 +25,7 @@ MIN_VAL = 0
 MAX_VAL = 3
 GREY_THRESHOLD = 0.01
 ALPHA = 0.7
-DATA_DIRECTORY = os.getenv('MRMS_DATADIR', '~/.mrms')
+DATA_DIRECTORY = os.getenv('MRMS_DATADIR', '/home/ian/gitstuff/ARTSy/mrms/')
 
 
 def load_data(date='latest'):
@@ -105,7 +105,7 @@ rgba_img = map_fig.image_rgba(image='image', x='x', y='y', dw='dw', dh='dh',
 
 STAMEN_TONER = WMTSTileSource(
     url=(os.getenv('TILE_SOURCE',
-                   'https://stamen-tiles.a.ssl.fastly.net/toner-lite') +
+                   'https://tiles.stadiamaps.com/tiles/stamen_toner_lite') +
          '/{Z}/{X}/{Y}.png'),
     attribution=(
         'Map tiles by <a href="http://stamen.com">Stamen Design</a>, '
