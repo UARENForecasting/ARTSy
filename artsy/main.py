@@ -25,7 +25,7 @@ MIN_VAL = 0
 MAX_VAL = 3
 GREY_THRESHOLD = 0.01
 ALPHA = 0.7
-DATA_DIRECTORY = os.getenv('MRMS_DATADIR', '/home/ian/gitstuff/ARTSy/mrms/')
+DATA_DIRECTORY = os.getenv('MRMS_DATADIR', '~/.mrms')
 
 
 def load_data(date='latest'):
